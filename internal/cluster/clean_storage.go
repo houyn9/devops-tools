@@ -5,11 +5,11 @@ import (
 	"fmt"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	_ "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	_ "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/client-go/kubernetes"
@@ -126,14 +126,18 @@ func cleanupPersistentVolumes(client *kubernetes.Clientset) error {
 
 			pvcInfo, err := client.CoreV1().PersistentVolumeClaims(pvcNamespace).Get(context.Background(), pvcName, metav1.GetOptions{})
 			if err != nil {
-				logToFile("PVC %s/%s 不存在，准备删除 PV %s\n", pvcNamespace, pvcName, pv.Name)
-				if err := backupResource(&pv, BackupPvDir+currentTime); err != nil {
-					logToFile("备份 PV %s 失败: %v\n", pv.Name, err)
-				}
-				if err := client.CoreV1().PersistentVolumes().Delete(context.Background(), pv.Name, metav1.DeleteOptions{}); err != nil {
-					logToFile("删除 PV %s 失败: %v\n", pv.Name, err)
+				if errors.IsNotFound(err) {
+					logToFile("PVC %s/%s 不存在，准备删除 PV %s\n", pvcNamespace, pvcName, pv.Name)
+					if err := backupResource(&pv, BackupPvDir+currentTime); err != nil {
+						logToFile("备份 PV %s 失败: %v\n", pv.Name, err)
+					}
+					if err := client.CoreV1().PersistentVolumes().Delete(context.Background(), pv.Name, metav1.DeleteOptions{}); err != nil {
+						logToFile("删除 PV %s 失败: %v\n", pv.Name, err)
+					} else {
+						logToFile("成功删除并备份 PV: %s\n", pv.Name)
+					}
 				} else {
-					logToFile("成功删除并备份 PV: %s\n", pv.Name)
+					logToFile("获取 PVC %s/%s 异常: %v\n", pvcNamespace, pvcName, err)
 				}
 			} else {
 				if pv.Spec.ClaimRef.UID != "" && pv.Spec.ClaimRef.UID != pvcInfo.UID {
@@ -168,8 +172,12 @@ func backupResource(obj runtime.Object, backupDir string) error {
 
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	if gvk.Empty() {
-		// 手动设定一个默认 GVK，以避免序列化器警告（视情况而定）
-		gvk = schema.GroupVersionKind{Group: "storage.k8s.io", Version: "v1", Kind: "StorageClass"}
+		// 尝试从注册的 scheme 中识别 GVK
+		gvks, _, err := scheme.ObjectKinds(obj)
+		if err != nil || len(gvks) == 0 {
+			return fmt.Errorf("无法从 scheme 获取 GVK: %v", err)
+		}
+		gvk = gvks[0]
 		obj.GetObjectKind().SetGroupVersionKind(gvk)
 	}
 
