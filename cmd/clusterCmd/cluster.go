@@ -18,5 +18,5 @@ func init() {
 	getStorageClassCmd.Flags().StringVarP(&fileinfo, "file", "f", "", "file path")
 	clusterCmd.AddCommand(getPVCmd)
 	getPVCmd.Flags().StringVarP(&fileinfo, "file", "f", "", "file path")
-	clusterCmd.AddCommand(cleanStorageCmd)
+	//clusterCmd.AddCommand(cleanStorageCmd)
 }
